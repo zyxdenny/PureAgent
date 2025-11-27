@@ -1,0 +1,25 @@
+cabal-version:   3.0
+name:            haskell-ai-agent
+version:         0.1.0.0
+build-type:      Simple
+
+common warnings
+    ghc-options: -Wall
+
+executable haskell-ai-agent
+    import:           warnings
+    main-is:          Main.hs
+    other-modules:
+        Agent.Core
+    build-depends:
+        base,
+        aeson,
+        text,
+        bytestring,
+        mtl,
+        req,
+        array,
+        hashable,
+        random
+    hs-source-dirs:   app, src
+    default-language: Haskell2010
