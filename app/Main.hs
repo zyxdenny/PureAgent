@@ -8,7 +8,8 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.IO (hFlush, stdout)
 import Agent.Core as AC
-import qualified Agent.FooAIModel as FA
+import Data.Default (def)
+import Agent.FooAIModel (fooAI)
 
 data AgentState = AgentState
   { memory  :: [Message]
@@ -38,6 +39,7 @@ add = do
   (a, b) <- ask
   return $ T.pack $ show $ a + b
 
+
 takeInput :: StepM ()
 takeInput = do
   input <- liftIO $ do
@@ -47,10 +49,10 @@ takeInput = do
   let inputMessage = UserMessage input
   modify (\s -> s { memory = inputMessage : memory s })
 
-llmAct :: LLM llm => llm -> StepM ()
-llmAct llm = do
+llmAct :: LLM -> AC.GenerationConfig -> [Tool] -> StepM ()
+llmAct llm conf tools = do
   s <- get
-  maybeAiMessage <- liftIO $ AC.invoke llm (memory s)
+  maybeAiMessage <- liftIO $ invoke llm conf tools (memory s)
   case maybeAiMessage of         
     Just aiMessage@(AIMessage txt _) -> do
       liftIO $ TIO.putStrLn txt
@@ -64,11 +66,8 @@ printState = do
     s <- get
     liftIO $ TIO.putStrLn $ T.pack $ "--- State After Cycle ---\n" ++ show s ++ "\n-------------------------"
 
-agent :: LLM llm => llm -> StepM ()
-agent llm = takeInput >> llmAct llm >> printState
-
-model :: FA.FooAI
-model = AC.bindTools AC.init [tool1, tool2]
+agent :: LLM -> AC.GenerationConfig -> [Tool] -> StepM ()
+agent llm conf tools = takeInput >> llmAct llm conf tools >> printState
 
 main :: IO ()
-main = evalStateT (forever $ agent model) (AgentState [])
+main = evalStateT (forever $ agent fooAI def [tool1, tool2]) (AgentState [])

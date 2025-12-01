@@ -21,6 +21,8 @@ executable haskell-ai-agent
         req,
         array,
         hashable,
-        random
+        random,
+        containers,
+        data-default
     hs-source-dirs:   app, src
     default-language: Haskell2010

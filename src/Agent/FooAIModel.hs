@@ -7,10 +7,6 @@ import qualified Data.Array as A
 import qualified Data.Text as T
 import Agent.Core
 
-data FooAI = FooAI { 
-  getTools :: [Tool]
-}
-
 invokeFooAI :: [Message] -> [Tool] -> IO (Maybe Message)
 invokeFooAI (UserMessage txt : _) tools =
     if elem "tool" $ map T.toLower $ T.words txt then do
@@ -29,12 +25,5 @@ invokeFooAI (UserMessage txt : _) tools =
 
 invokeFooAI _ _ = return Nothing
 
-instance LLM FooAI where
-  init = FooAI []
-
-  invoke model msgs = do
-    let tools = getTools model
-    response <- invokeFooAI msgs tools
-    return response
-
-  bindTools model tools = model { getTools = tools }
+fooAI :: LLM
+fooAI = LLM $ \_ tools msgs -> invokeFooAI msgs tools
