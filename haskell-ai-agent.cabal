@@ -11,6 +11,7 @@ executable haskell-ai-agent
     main-is:          Main.hs
     other-modules:
         Agent.Core
+        Agent.FooAIModel
     build-depends:
         base,
         aeson,
