@@ -4,7 +4,7 @@
 
 ## Overview
 
-MonadSynapse is a Haskell-based AI agent framework designed for building
+PureAgent is a Haskell-based AI agent framework designed for building
 intelligent, reliable agents with clean functional architecture.
 
 ---
