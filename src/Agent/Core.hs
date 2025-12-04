@@ -4,32 +4,41 @@ import qualified Data.Text as T
 import Data.Map.Strict (Map)
 import Data.Default (Default(..))
 import Data.Aeson (Value(..))
+import Control.Exception (IOException)
 
-type ToolID = String
+type ToolID = T.Text
 
-data ToolCallInfo = ToolCallInfo
-  { toolCallID     :: ToolID
-  , toolCalledName :: String
-  , toolCalledArgs :: [String]
-  } deriving Show
+-- | Represents a request FROM the AI to run a tool
+data ToolCall = ToolCall
+  { tcID   :: ToolID
+  , tcName :: T.Text
+  , tcArgs :: Map T.Text Value
+  } deriving (Show, Eq)
 
-type Content = T.Text
-
-data Message =
-    AIMessage   Content [ToolCallInfo]
-  | UserMessage Content
-  | SysMessage  Content
-  | ToolMessage Content ToolID
-  deriving Show
+data Message
+  -- | 1. System: Sets the behavior
+  = SystemMessage T.Text
+  
+  -- | 2. User: The human input
+  | UserMessage T.Text
+  
+  -- | 3. AI: Can contain text AND/OR tool calls
+  -- Note: OpenAI can send text content along with tool calls (reasoning)
+  | AIMessage T.Text [ToolCall] 
+  
+  -- | 4. Tool: The result of the function execution
+  -- Must include the tool_call_id so the LLM knows which call this answers
+  | ToolMessage T.Text ToolID 
+  deriving (Show, Eq)
 
 data ArgInfo = ArgInfo
-  { paramName :: String
-  , paramType :: String
-  , paramDesc :: String
+  { argName :: T.Text
+  , argType :: T.Text
+  , argDesc :: T.Text
   } deriving Show
 
 data Tool = Tool
-  { toolName :: String
+  { toolName :: T.Text
   , toolDesc :: T.Text
   , toolArgs :: [ArgInfo]
   } deriving Show
@@ -63,5 +72,5 @@ instance Default GenerationConfig where
     }
 
 data LLM = LLM
-  { invoke :: GenerationConfig -> [Tool] -> [Message] -> IO (Maybe Message)
+  { invoke :: GenerationConfig -> [Tool] -> [Message] -> IO (Either T.Text Message)
   }

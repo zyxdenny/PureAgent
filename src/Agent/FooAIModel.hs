@@ -5,6 +5,8 @@ module Agent.FooAIModel where
 import System.Random (getStdGen, StdGen, randomR)
 import qualified Data.Array as A
 import qualified Data.Text as T
+import Data.Map.Strict (fromList)
+import Data.Aeson (toJSON)
 import Agent.Core
 
 invokeFooAI :: [Message] -> [Tool] -> IO (Maybe Message)
@@ -12,9 +14,11 @@ invokeFooAI (UserMessage txt : _) tools =
     if elem "tool" $ map T.toLower $ T.words txt then do
       case tools of
         [] -> return Nothing
-        t : _ -> return $ Just $ AIMessage "" [ToolCallInfo "1" (toolName t) args]
+        t : _ -> return $ Just $ AIMessage "" [ToolCall "1" (toolName t) args]
           where
-            args = map show [1..(length $ toolArgs t)]
+            args = fromList $ zip keys vals
+            keys = map argName $ toolArgs t
+            vals = map toJSON ([1..(length $ toolArgs t)] :: [Int])
     else do
       let greetings = ["Hello!", "How are you?", "Nice to meet you!", "Fuck you!"] :: [T.Text]
       let n = length greetings
