@@ -2,7 +2,7 @@
 
 import Control.Monad.State
 import Control.Monad.Reader
-import Control.Monad (forever)
+import Control.Monad (unless, when, forever)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.IO (hFlush, stdout)
@@ -64,10 +64,7 @@ llmNode llm conf tools = do
   messageOrErr <- liftIO $ invoke llm conf tools (reverse $ memory s)
   case messageOrErr of         
     Right aiMessage@(AIMessage txt ts) -> do
-      if not $ T.null txt then
-        liftIO $ TIO.putStrLn txt
-      else
-        return ()
+      unless (T.null txt) $ liftIO $ TIO.putStrLn txt
       modify (\s -> s { memory = aiMessage : memory s })
       return $ not $ null ts
 
@@ -76,7 +73,7 @@ llmNode llm conf tools = do
       return False
 
     Left err -> do
-      liftIO $ putStrLn $ show err
+      liftIO $ print err
       return False
 
 toolNode :: StepM ()
@@ -85,14 +82,13 @@ toolNode = do
   case m of
     AIMessage _ ts : _ -> do
       toolResults <- liftIO
-                       $ sequence
-                       $ map (\(ToolCall _ name args) ->
-                                case Map.lookup name toolMap of
-                                  Just toolM -> runReaderT toolM args
-                                  Nothing    -> return $ "Tool " <> name <> " is not found."
-                             ) ts
+                       $ mapM
+                           (\(ToolCall _ name args) ->
+                              case Map.lookup name toolMap of
+                                Just toolM -> runReaderT toolM args
+                                Nothing    -> return $ "Tool " <> name <> " is not found.") ts
       let toolIDs = map (\(ToolCall id _ _) -> id) ts
-          toolMessages = map (\(r, id) -> ToolMessage r id) $ zip toolResults toolIDs
+          toolMessages = zipWith ToolMessage toolResults toolIDs
       modify (\s -> s { memory = toolMessages ++ memory s })
 
     _ ->
@@ -112,11 +108,9 @@ agent llm conf tools = do
   toolLoop :: StepM ()
   toolLoop = do
     routeToTool <- llmNode llm conf tools
-    if routeToTool then do
+    when routeToTool $ do
       toolNode
       toolLoop
-    else
-      return ()
 
 agentLoop :: StepM ()
 agentLoop = do

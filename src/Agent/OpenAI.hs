@@ -22,7 +22,7 @@ type ModelName = String
 -- | Constructor
 makeOpenAI :: APIKey -> ModelName -> LLM
 makeOpenAI apiKey modelName = LLM
-  { invoke = \conf tools msgs -> runOpenAI apiKey modelName conf tools msgs
+  { invoke = runOpenAI apiKey modelName
   }
 
 -- | Main execution logic
@@ -42,8 +42,7 @@ runOpenAI apiKey model conf tools msgs = do
     req <- parseRequest "POST https://api.openai.com/v1/chat/completions"
     let req' = setRequestHeader "Authorization" ["Bearer " <> BS.pack apiKey]
              $ setRequestHeader "Content-Type" ["application/json"]
-             $ setRequestBodyJSON payload
-             $ req
+             $ setRequestBodyJSON payload req
 
     result <- try (httpJSON req') :: IO (Either IOException (Response Value))
     
@@ -124,7 +123,7 @@ configToJSON conf = catMaybes
     , ("stop"        .=) <$> if null (stopSequences conf) then Nothing else Just (stopSequences conf)
     , ("seed"        .=) <$> seed conf
     ] 
-    ++ (if jsonMode conf then [("response_format" .= object ["type" .= ("json_object" :: String)])] else [])
+    ++ ["response_format" .= object ["type" .= ("json_object" :: String)] | jsonMode conf]
     ++ map toPair (Map.toList (extraParams conf))
   where
     -- Convert (Text, Value) -> (Key, Value)
@@ -135,28 +134,28 @@ configToJSON conf = catMaybes
 --------------------------------------------------------------------------------
 
 parseOpenAIResponse :: Value -> Maybe Message
-parseOpenAIResponse v = parseMaybe parser v
+parseOpenAIResponse = parseMaybe parser
   where
     parser :: Value -> Parser Message
-    parser val = withObject "Response" (\o -> do
+    parser = withObject "Response" (\o -> do
         choices <- o .: "choices"
         case choices of
             (c:_) -> parseMessage =<< c .: "message"
             []    -> fail "No choices returned"
-        ) val
+        )
 
     parseMessage :: Value -> Parser Message
-    parseMessage val = withObject "Message" (\o -> do
+    parseMessage = withObject "Message" (\o -> do
         content <- o .:? "content" .!= ""
         rawTC   <- o .:? "tool_calls"
         parsedTC <- case rawTC of
             Just (Array arr) -> mapM parseToolCall arr
-            _                -> return $ V.empty
+            _                -> return V.empty
         return $ AIMessage content (V.toList parsedTC)
-        ) val
+        )
 
     parseToolCall :: Value -> Parser ToolCall
-    parseToolCall val = withObject "ToolCall" (\o -> do
+    parseToolCall = withObject "ToolCall" (\o -> do
         tid  <- o .: "id"
         func <- o .: "function"
         name <- func .: "name"
@@ -172,7 +171,7 @@ parseOpenAIResponse v = parseMaybe parser v
               _          -> mempty 
         
         return $ ToolCall tid name argsMap
-        ) val
+        )
     
     -- Helper to convert Aeson Object to Map
     toMap :: Object -> Map.Map T.Text Value
