@@ -1,10 +1,15 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleContexts #-}
+
 module Agent.Core where
 
 import qualified Data.Text as T
 import Data.Map.Strict (Map)
 import Data.Default (Default(..))
 import Data.Aeson (Value(..))
-import Control.Exception (IOException)
+import Control.Monad.State
+import Control.Monad.Reader
+import Control.Monad.Except
 
 type ToolID = T.Text
 
@@ -74,3 +79,42 @@ instance Default GenerationConfig where
 data LLM = LLM
   { invoke :: GenerationConfig -> [Tool] -> [Message] -> IO (Either T.Text Message)
   }
+
+
+newtype AgentM env st err a = AgentM
+  { unAgentM ::
+      StateT st
+        (ReaderT env
+          (ExceptT err IO)) a
+  }
+  deriving
+    ( Functor
+    , Applicative
+    , Monad
+    , MonadState st
+    , MonadReader env
+    , MonadError err
+    , MonadIO
+    )
+
+runAgent
+  :: env
+  -> st
+  -> AgentM env st err a
+  -> IO (Either err (a, st))
+runAgent env st (AgentM m) =
+  runExceptT $
+    runReaderT
+      (runStateT m st)
+      env
+
+evalAgent
+  :: env
+  -> st
+  -> AgentM env st err a
+  -> IO (Either err a)
+evalAgent env st (AgentM m) =
+  runExceptT $
+    runReaderT
+      (evalStateT m st)
+      env

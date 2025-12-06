@@ -12,6 +12,9 @@ import Agent.OpenAI (makeOpenAI)
 import qualified Data.Map.Strict as Map
 import Data.Aeson (Value(..))
 import System.Environment (getEnv, lookupEnv)
+import Network.HTTP.Conduit (simpleHttp)
+
+
 
 type ToolM = ReaderT (Map.Map T.Text Value) IO T.Text
 getWeather :: ToolM
@@ -19,15 +22,17 @@ getWeather = do
   params <- ask
   case Map.lookup "city" params of
     -- 1. Pattern match on 'String' constructor to extract the Text
-    Just (String cityName) -> 
-      return $ "It's always sunny in " <> cityName <> "."
+    Just (String cityName) -> do
+      let url = "https://wttr.in/" ++ T.unpack cityName
+      response <- simpleHttp url
+      return $ T.pack $ show response
       
     -- 2. Handle case where key exists but isn't a string (e.g. Number 42)
-    Just _ -> 
+    Just _ ->
       return "Error: Parameter 'city' must be a string."
       
     -- 3. Handle missing key
-    Nothing -> 
+    Nothing ->
       return "Error: No city name is provided."
 
 getWeatherTool :: Tool
@@ -45,8 +50,7 @@ data AgentState = AgentState
   { memory  :: [Message]
   } deriving (Show)
 
-type StepM = StateT AgentState IO
-
+type StepM = AgentM () AgentState ()
 
 takeInputNode :: StepM ()
 takeInputNode = do
@@ -120,5 +124,5 @@ agentLoop = do
       tools = [getWeatherTool]
   forever $ agent model def tools
 
-main :: IO ()
-main = evalStateT agentLoop (AgentState [])
+main :: IO (Either () ())
+main = evalAgent () (AgentState []) agentLoop
