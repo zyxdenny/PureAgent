@@ -2,9 +2,11 @@
 
 import Control.Monad.State
 import Control.Monad.Reader
-import Control.Monad (unless, when, forever)
+import Control.Monad.Except
+import Control.Monad (unless, when)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import Data.Maybe
 import System.IO (hFlush, stdout)
 import Agent.Core
 import Data.Default (def)
@@ -14,9 +16,8 @@ import Data.Aeson (Value(..))
 import System.Environment (getEnv, lookupEnv)
 import Network.HTTP.Conduit (simpleHttp)
 
-
-
 type ToolM = ReaderT (Map.Map T.Text Value) IO T.Text
+
 getWeather :: ToolM
 getWeather = do
   params <- ask
@@ -50,7 +51,14 @@ data AgentState = AgentState
   { memory  :: [Message]
   } deriving (Show)
 
-type StepM = AgentM () AgentState ()
+
+data AgentError =
+    LLMCallingFail LLMError
+  | BadMessage T.Text
+  | BadHistory T.Text
+  | ToolNotFound T.Text
+
+type StepM = AgentM () AgentState AgentError
 
 takeInputNode :: StepM ()
 takeInputNode = do
@@ -65,49 +73,50 @@ takeInputNode = do
 llmNode :: LLM -> GenerationConfig -> [Tool] -> StepM Bool
 llmNode llm conf tools = do
   s <- get
-  messageOrErr <- liftIO $ invoke llm conf tools (reverse $ memory s)
-  case messageOrErr of         
+  response <- liftIO $ invoke llm conf tools (reverse $ memory s)
+  case response of         
     Right aiMessage@(AIMessage txt ts) -> do
       unless (T.null txt) $ liftIO $ TIO.putStrLn txt
       modify (\s -> s { memory = aiMessage : memory s })
       return $ not $ null ts
 
     Right _ -> do
-      liftIO $ putStrLn "The LLM returns Non-AI message???"
-      return False
+      throwError $ BadMessage "The LLM doesn't produce AIMessage"
 
     Left err -> do
-      liftIO $ print err
-      return False
+      throwError $ LLMCallingFail err
 
 toolNode :: StepM ()
 toolNode = do
   AgentState m <- get
   case m of
     AIMessage _ ts : _ -> do
-      toolResults <- liftIO
-                       $ mapM
-                           (\(ToolCall _ name args) ->
-                              case Map.lookup name toolMap of
-                                Just toolM -> runReaderT toolM args
-                                Nothing    -> return $ "Tool " <> name <> " is not found.") ts
-      let toolIDs = map (\(ToolCall id _ _) -> id) ts
-          toolMessages = zipWith ToolMessage toolResults toolIDs
+      toolResults <- liftIO $
+        mapM (
+          \(ToolCall _ name args) ->
+            case Map.lookup name toolMap of
+              Just toolM -> do
+                result <- runReaderT toolM args
+                return $ Just result
+
+              Nothing -> return Nothing
+        ) ts
+
+      let toolIDs = map (\(ToolCall iD _ _) -> iD) ts
+          toolMessages = catMaybes $ zipWith f toolResults toolIDs
+            where
+              f (Just res) iD = Just $ ToolMessage res iD
+              f Nothing _     = Nothing
+
       modify (\s -> s { memory = toolMessages ++ memory s })
 
     _ ->
-      liftIO $ TIO.putStrLn "Error: Tool node is not followed by AIMessage"
-
-printStateNode :: StepM ()
-printStateNode = do
-    s <- get
-    liftIO $ TIO.putStrLn $ T.pack $ "--- State After Cycle ---\n" ++ show s ++ "\n-------------------------"
+      throwError $ BadHistory "Tool node is not followed by AIMessage"
 
 agent :: LLM -> GenerationConfig -> [Tool] -> StepM ()
 agent llm conf tools = do
   takeInputNode
   toolLoop
-  printStateNode
  where
   toolLoop :: StepM ()
   toolLoop = do
@@ -122,7 +131,9 @@ agentLoop = do
   let modelName = "gpt-5-nano"
       model = makeOpenAI key modelName
       tools = [getWeatherTool]
-  forever $ agent model def tools
 
-main :: IO (Either () ())
+  agent model def tools
+  agentLoop
+
+main :: IO (Either AgentError ())
 main = evalAgent () (AgentState []) agentLoop

@@ -10,6 +10,7 @@ import Data.Aeson (Value(..))
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Except
+import Network.HTTP.Client (HttpException)
 
 type ToolID = T.Text
 
@@ -76,10 +77,20 @@ instance Default GenerationConfig where
     , extraParams   = mempty
     }
 
-data LLM = LLM
-  { invoke :: GenerationConfig -> [Tool] -> [Message] -> IO (Either T.Text Message)
+data LLMError = LLMError
+  { llmErrorType    :: LLMErrorType
+  , llmErrorMessage :: T.Text
   }
 
+data LLMErrorType
+  = LLMHttpError HttpException
+  | LLMRateLimited
+  | LLMParseResponseError
+  deriving (Show)
+
+data LLM = LLM
+  { invoke :: GenerationConfig -> [Tool] -> [Message] -> IO (Either LLMError Message)
+  }
 
 newtype AgentM env st err a = AgentM
   { unAgentM ::

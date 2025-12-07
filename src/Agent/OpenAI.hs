@@ -13,8 +13,10 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map.Strict as Map
 import Network.HTTP.Simple
 import Data.Maybe (catMaybes)
-import Control.Exception (try, IOException)
+import Control.Exception (try)
 import qualified Data.Vector as V
+import Data.Aeson.Text (encodeToLazyText)
+import qualified Data.Text.Lazy as TL
 
 type APIKey = String
 type ModelName = String
@@ -26,7 +28,13 @@ makeOpenAI apiKey modelName = LLM
   }
 
 -- | Main execution logic
-runOpenAI :: APIKey -> ModelName -> GenerationConfig -> [Tool] -> [Message] -> IO (Either T.Text Message)
+runOpenAI
+  :: APIKey
+  -> ModelName
+  -> GenerationConfig
+  -> [Tool]
+  -> [Message]
+  -> IO (Either LLMError Message)
 runOpenAI apiKey model conf tools msgs = do
     let payload = object $
             [ "model"       .= model
@@ -44,10 +52,10 @@ runOpenAI apiKey model conf tools msgs = do
              $ setRequestHeader "Content-Type" ["application/json"]
              $ setRequestBodyJSON payload req
 
-    result <- try (httpJSON req') :: IO (Either IOException (Response Value))
+    result <- try (httpJSON req') :: IO (Either HttpException (Response Value))
     
     case result of
-        Left err -> return $ Left $ T.pack $ show err 
+        Left err -> return $ Left $ LLMError (LLMHttpError err) "HTTP error happended when calling the LLM"
         Right response -> do
             let responseBody = getResponseBody response
             
@@ -55,12 +63,7 @@ runOpenAI apiKey model conf tools msgs = do
             case parseOpenAIResponse responseBody of
                 Just message -> return $ Right message
                 Nothing -> do
-                    -- Print the raw JSON to stdout for debugging
-                    putStrLn "\n[Error] Failed to parse OpenAI Response:"
-                    print responseBody 
-                    putStrLn "----------------------------------------\n"
-                    
-                    return $ Left "Error: Can't parse response"
+                    return $ Left $ LLMError LLMParseResponseError $ TL.toStrict $ encodeToLazyText responseBody
 
 --------------------------------------------------------------------------------
 -- Serialization (Haskell -> OpenAI JSON)

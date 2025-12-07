@@ -21,6 +21,7 @@ executable haskell-ai-agent
         req,
         http-conduit,
         http-types,
+        http-client,
         array,
         hashable,
         random,
