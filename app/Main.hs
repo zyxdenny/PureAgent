@@ -73,6 +73,8 @@ takeInputNode = do
 llmNode :: LLM -> GenerationConfig -> [Tool] -> StepM Bool
 llmNode llm conf tools = do
   s <- get
+  let sysMessage = SystemMessage "You are an assiatant for weather queries. Don't answer any unrelated questions."
+  modify (\s -> s { memory = sysMessage : memory s })
   response <- liftIO $ invoke llm conf tools (reverse $ memory s)
   case response of         
     Right aiMessage@(AIMessage txt ts) -> do
