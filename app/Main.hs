@@ -1,12 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import Control.Monad.State
-import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Monad (unless, when)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Maybe
 import System.IO (hFlush, stdout)
 import Agent.Core
 import Data.Default (def)
@@ -16,25 +14,21 @@ import Data.Aeson (Value(..))
 import System.Environment (getEnv, lookupEnv)
 import Network.HTTP.Conduit (simpleHttp)
 
-type ToolM = ReaderT (Map.Map T.Text Value) IO T.Text
-
-getWeather :: ToolM
-getWeather = do
-  params <- ask
-  case Map.lookup "city" params of
-    -- 1. Pattern match on 'String' constructor to extract the Text
-    Just (String cityName) -> do
-      let url = "https://wttr.in/" ++ T.unpack cityName
-      response <- simpleHttp url
-      return $ T.pack $ show response
-      
-    -- 2. Handle case where key exists but isn't a string (e.g. Number 42)
-    Just _ ->
-      return "Error: Parameter 'city' must be a string."
-      
-    -- 3. Handle missing key
-    Nothing ->
-      return "Error: No city name is provided."
+getWeather :: ToolInstance
+getWeather = ToolInstance $ (
+  \params ->
+    case Map.lookup "city" params of
+      Just (String cityName) -> do
+        let url = "https://wttr.in/" ++ T.unpack cityName
+        response <- simpleHttp url
+        return $ T.pack $ show response
+        
+      Just _ ->
+        return "Error: Parameter 'city' must be a string"
+        
+      Nothing ->
+        return "Error: No city name is provided"
+  )
 
 getWeatherTool :: Tool
 getWeatherTool = Tool
@@ -43,8 +37,35 @@ getWeatherTool = Tool
   , toolArgs = [ArgInfo "city" "string" "The city to be queried"]
   }
 
-toolMap :: Map.Map T.Text ToolM
-toolMap = Map.fromList [(toolName getWeatherTool, getWeather)]
+myAdd :: ToolInstance
+myAdd = ToolInstance $ (
+  \params ->
+    case (Map.lookup "a" params, Map.lookup "b" params) of
+      (Just (Number a), Just (Number b)) -> do
+        return $ T.pack $ show $ a + b
+
+      (Just _, Just _) ->
+        return "Error: a and b have to be both integers"
+
+      (Nothing, _) ->
+        return "Error: parameter a is not provided"
+
+      (_, Nothing) ->
+        return "Error: parameter b is not provided"
+  )
+
+myAddTool :: Tool
+myAddTool = Tool
+  { toolName = "add"
+  , toolDesc = "Calculate the sum of two integers."
+  , toolArgs = [ArgInfo "a" "int" "add nnumber a", ArgInfo "b" "int" "add nnumber b"]
+  }
+
+toolMap :: Map.Map T.Text ToolInstance
+toolMap = Map.fromList
+  [ (toolName getWeatherTool, getWeather)
+  , (toolName myAddTool, myAdd)
+  ]
 
 
 data AgentState = AgentState
@@ -73,7 +94,7 @@ takeInputNode = do
 llmNode :: LLM -> GenerationConfig -> [Tool] -> StepM Bool
 llmNode llm conf tools = do
   s <- get
-  let sysMessage = SystemMessage "You are an assiatant for weather queries. Don't answer any unrelated questions."
+  let sysMessage = SystemMessage "You are an assiatant for weather queries."
   modify (\s -> s { memory = sysMessage : memory s })
   response <- liftIO $ invoke llm conf tools (reverse $ memory s)
   case response of         
@@ -92,28 +113,15 @@ toolNode :: StepM ()
 toolNode = do
   AgentState m <- get
   case m of
-    AIMessage _ ts : _ -> do
-      toolResults <- liftIO $
-        mapM (
-          \(ToolCall _ name args) ->
-            case Map.lookup name toolMap of
-              Just toolM -> do
-                result <- runReaderT toolM args
-                return $ Just result
+    message : _ -> do
+      toolResponse <- liftIO $ callToolsAndGenerateMessages message toolMap
+      case toolResponse of
+        Just toolMessages ->
+          modify (\s -> s { memory = toolMessages ++ memory s })
 
-              Nothing -> return Nothing
-        ) ts
+        Nothing -> throwError $ BadHistory "Tool node is not followed by AIMessage"
 
-      let toolIDs = map (\(ToolCall iD _ _) -> iD) ts
-          toolMessages = catMaybes $ zipWith f toolResults toolIDs
-            where
-              f (Just res) iD = Just $ ToolMessage res iD
-              f Nothing _     = Nothing
-
-      modify (\s -> s { memory = toolMessages ++ memory s })
-
-    _ ->
-      throwError $ BadHistory "Tool node is not followed by AIMessage"
+    [] -> throwError $ BadHistory "The history is empty"
 
 agent :: LLM -> GenerationConfig -> [Tool] -> StepM ()
 agent llm conf tools = do

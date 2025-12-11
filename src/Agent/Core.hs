@@ -1,16 +1,18 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 
 module Agent.Core where
 
 import qualified Data.Text as T
-import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Default (Default(..))
 import Data.Aeson (Value(..))
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Except
 import Network.HTTP.Client (HttpException)
+import Data.Maybe
 
 type ToolID = T.Text
 
@@ -18,7 +20,7 @@ type ToolID = T.Text
 data ToolCall = ToolCall
   { tcID   :: ToolID
   , tcName :: T.Text
-  , tcArgs :: Map T.Text Value
+  , tcArgs :: Map.Map T.Text Value
   } deriving (Show, Eq)
 
 data Message
@@ -63,7 +65,7 @@ data GenerationConfig = GenerationConfig
     -- | The "Escape Hatch" 
     -- Allows passing provider-specific parameters not covered above
     -- e.g., OpenAI's "frequency_penalty" or Anthropic's "top_k"
-  , extraParams       :: Map T.Text Value 
+  , extraParams       :: Map.Map T.Text Value 
   } deriving (Show, Eq)
 
 instance Default GenerationConfig where
@@ -129,3 +131,38 @@ evalAgent env st (AgentM m) =
     runReaderT
       (evalStateT m st)
       env
+
+-- Tool instance
+data ToolInstance where
+  ToolInstance :: Show a =>
+    (Map.Map T.Text Value -> IO a) -> ToolInstance
+
+runTool :: ToolInstance -> Map.Map T.Text Value -> IO T.Text
+runTool (ToolInstance f) params = do
+  result <- f params
+  return $ T.pack $ show result
+
+-- The function takes a message, the tool map and performs the tool call
+-- to generate a list of tool messages. If the input message is not AIMessage, return Nothing
+callToolsAndGenerateMessages :: Message -> Map.Map T.Text ToolInstance -> IO (Maybe [Message])
+callToolsAndGenerateMessages (AIMessage _ ts) toolMap = do
+  toolResults <- liftIO $
+    mapM (
+      \(ToolCall _ name args) ->
+        case Map.lookup name toolMap of
+          Just tool -> do
+            result <- runTool tool args
+            return $ Just result
+
+          Nothing -> return Nothing
+    ) ts
+
+  let toolIDs = map (\(ToolCall iD _ _) -> iD) ts
+      toolMessages = catMaybes $ zipWith f toolResults toolIDs
+        where
+          f (Just res) iD = Just $ ToolMessage res iD
+          f Nothing _     = Nothing
+
+  return $ Just toolMessages
+
+callToolsAndGenerateMessages _ _ = return Nothing
