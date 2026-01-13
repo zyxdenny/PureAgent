@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 import Control.Monad.State
 import Control.Monad.Except
@@ -6,29 +7,18 @@ import Control.Monad (unless, when)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.IO (hFlush, stdout)
-import Agent.Core
 import Data.Default (def)
 import Agent.OpenAI (makeOpenAI)
 import qualified Data.Map.Strict as Map
-import Data.Aeson (Value(..))
-import System.Environment (getEnv, lookupEnv)
-import Network.HTTP.Conduit (simpleHttp)
+import System.Environment (getEnv)
 
-getWeather :: ToolInstance
-getWeather = ToolInstance $ (
-  \params ->
-    case Map.lookup "city" params of
-      Just (String cityName) -> do
-        let url = "https://wttr.in/" ++ T.unpack cityName
-        response <- simpleHttp url
-        return $ T.pack $ show response
-        
-      Just _ ->
-        return "Error: Parameter 'city' must be a string"
-        
-      Nothing ->
-        return "Error: No city name is provided"
-  )
+import Agent.Core
+import Agent.Tool
+
+getWeather :: ToolM T.Text
+getWeather = do
+  city <- getParam @T.Text "city"
+  return $ "It's always sunny in " <> city
 
 getWeatherTool :: Tool
 getWeatherTool = Tool
@@ -37,34 +27,33 @@ getWeatherTool = Tool
   , toolArgs = [ArgInfo "city" "string" "The city to be queried"]
   }
 
-myAdd :: ToolInstance
-myAdd = ToolInstance $ (
-  \params ->
-    case (Map.lookup "a" params, Map.lookup "b" params) of
-      (Just (Number a), Just (Number b)) -> do
-        return $ T.pack $ show $ a + b
-
-      (Just _, Just _) ->
-        return "Error: a and b have to be both integers"
-
-      (Nothing, _) ->
-        return "Error: parameter a is not provided"
-
-      (_, Nothing) ->
-        return "Error: parameter b is not provided"
-  )
-
-myAddTool :: Tool
-myAddTool = Tool
-  { toolName = "add"
-  , toolDesc = "Calculate the sum of two integers."
-  , toolArgs = [ArgInfo "a" "int" "add nnumber a", ArgInfo "b" "int" "add nnumber b"]
-  }
+-- myAdd :: ToolInstance
+-- myAdd = ToolInstance $ (
+--   \params ->
+--     case (Map.lookup "a" params, Map.lookup "b" params) of
+--       (Just (Number a), Just (Number b)) -> do
+--         return $ T.pack $ show $ a + b
+--
+--       (Just _, Just _) ->
+--         return "Error: a and b have to be both integers"
+--
+--       (Nothing, _) ->
+--         return "Error: parameter a is not provided"
+--
+--       (_, Nothing) ->
+--         return "Error: parameter b is not provided"
+--   )
+--
+-- myAddTool :: Tool
+-- myAddTool = Tool
+--   { toolName = "add"
+--   , toolDesc = "Calculate the sum of two integers."
+--   , toolArgs = [ArgInfo "a" "int" "add nnumber a", ArgInfo "b" "int" "add number b"]
+--   }
 
 toolMap :: Map.Map T.Text ToolInstance
 toolMap = Map.fromList
-  [ (toolName getWeatherTool, getWeather)
-  , (toolName myAddTool, myAdd)
+  [ (toolName getWeatherTool, ToolInstance getWeather)
   ]
 
 
@@ -94,7 +83,7 @@ takeInputNode = do
 llmNode :: LLM -> GenerationConfig -> [Tool] -> StepM Bool
 llmNode llm conf tools = do
   s <- get
-  let sysMessage = SystemMessage "You are an assiatant for weather queries."
+  let sysMessage = SystemMessage "You are an assiatant for weather queries. Only answer questions about weather."
   modify (\s -> s { memory = sysMessage : memory s })
   response <- liftIO $ invoke llm conf tools (reverse $ memory s)
   case response of         

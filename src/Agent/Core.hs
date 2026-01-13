@@ -12,7 +12,7 @@ import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Except
 import Network.HTTP.Client (HttpException)
-import Data.Maybe
+-- import Data.Maybe
 
 type ToolID = T.Text
 
@@ -91,7 +91,10 @@ data LLMErrorType
   deriving (Show)
 
 data LLM = LLM
-  { invoke :: GenerationConfig -> [Tool] -> [Message] -> IO (Either LLMError Message)
+  { invoke :: GenerationConfig
+           -> [Tool]
+           -> [Message]
+           -> IO (Either LLMError Message)
   }
 
 newtype AgentM env st err a = AgentM
@@ -132,37 +135,40 @@ evalAgent env st (AgentM m) =
       (evalStateT m st)
       env
 
--- Tool instance
-data ToolInstance where
-  ToolInstance :: Show a =>
-    (Map.Map T.Text Value -> IO a) -> ToolInstance
-
-runTool :: ToolInstance -> Map.Map T.Text Value -> IO T.Text
-runTool (ToolInstance f) params = do
-  result <- f params
-  return $ T.pack $ show result
-
--- The function takes a message, the tool map and performs the tool call
--- to generate a list of tool messages. If the input message is not AIMessage, return Nothing
-callToolsAndGenerateMessages :: Message -> Map.Map T.Text ToolInstance -> IO (Maybe [Message])
-callToolsAndGenerateMessages (AIMessage _ ts) toolMap = do
-  toolResults <- liftIO $
-    mapM (
-      \(ToolCall _ name args) ->
-        case Map.lookup name toolMap of
-          Just tool -> do
-            result <- runTool tool args
-            return $ Just result
-
-          Nothing -> return Nothing
-    ) ts
-
-  let toolIDs = map (\(ToolCall iD _ _) -> iD) ts
-      toolMessages = catMaybes $ zipWith f toolResults toolIDs
-        where
-          f (Just res) iD = Just $ ToolMessage res iD
-          f Nothing _     = Nothing
-
-  return $ Just toolMessages
-
-callToolsAndGenerateMessages _ _ = return Nothing
+-- -- Tool instance
+-- data ToolInstance where
+--   ToolInstance :: Show a =>
+--     (Map.Map T.Text Value -> IO a) -> ToolInstance
+--
+-- runTool :: ToolInstance -> Map.Map T.Text Value -> IO T.Text
+-- runTool (ToolInstance f) params = do
+--   result <- f params
+--   return $ T.pack $ show result
+--
+-- -- The function takes a message, the tool map and performs the tool call
+-- -- to generate a list of tool messages. If the input message is not AIMessage, return Nothing
+-- callToolsAndGenerateMessages
+--   :: Message
+--   -> Map.Map T.Text ToolInstance
+--   -> IO (Maybe [Message])
+-- callToolsAndGenerateMessages (AIMessage _ ts) toolMap = do
+--   toolResults <- liftIO $
+--     mapM (
+--       \(ToolCall _ name args) ->
+--         case Map.lookup name toolMap of
+--           Just tool -> do
+--             result <- runTool tool args
+--             return $ Just result
+--
+--           Nothing -> return Nothing
+--     ) ts
+--
+--   let toolIDs = map (\(ToolCall iD _ _) -> iD) ts
+--       toolMessages = catMaybes $ zipWith f toolResults toolIDs
+--         where
+--           f (Just res) iD = Just $ ToolMessage res iD
+--           f Nothing _     = Nothing
+--
+--   return $ Just toolMessages
+--
+-- callToolsAndGenerateMessages _ _ = return Nothing
