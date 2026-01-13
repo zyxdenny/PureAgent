@@ -19,12 +19,10 @@ getWeatherTool = Tool
     { toolName = "get_weather"
     , toolDesc = "Get the current weather of a city."
     , toolArgs = [ArgInfo "city" "string" "The city to be queried"]
-    }
-  (ToolInstance tool)
-    where
-      tool = do 
-        city <- getParam @T.Text "city"
-        return $ "It's always sunny in " <> city
+    } $
+  ToolInstance $ do 
+    city <- getParam @T.Text "city"
+    return $ "It's always sunny in " <> city
 
 toolRegistry :: ToolRegistry
 toolRegistry = registerTools [getWeatherTool]
