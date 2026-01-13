@@ -163,8 +163,8 @@ data ToolSchema = ToolSchema
 data ToolInstance = forall a. Show a => ToolInstance (ToolM a)
 
 data Tool = Tool
-  { toolSchema   :: ToolSchema
-  , toolInstance :: ToolInstance
+  { toolInstance :: ToolInstance
+  , toolSchema   :: ToolSchema
   }
 
 type ToolRegistry = Map.Map T.Text (ToolSchema, ToolInstance)
@@ -173,7 +173,7 @@ registerTools :: [Tool] -> ToolRegistry
 registerTools ts =
   Map.fromList $ map f ts
     where
-      f (Tool schema inst) =
+      f (Tool inst schema) =
         (toolName schema, (schema, inst))
 
 runTool :: ToolInstance -> Params -> IO T.Text

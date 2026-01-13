@@ -14,15 +14,17 @@ import Agent.Core
 import Model.OpenAI (makeOpenAI)
 
 getWeatherTool :: Tool
-getWeatherTool = Tool
-  ToolSchema
-    { toolName = "get_weather"
-    , toolDesc = "Get the current weather of a city."
-    , toolArgs = [ArgInfo "city" "string" "The city to be queried"]
-    } $
-  ToolInstance $ do 
-    city <- getParam @T.Text "city"
-    return $ "It's always sunny in " <> city
+getWeatherTool = Tool tool schema
+  where
+    tool = ToolInstance $ do
+      city <- getParam @T.Text "city"
+      return $ "It's always sunny in " <> city
+
+    schema = ToolSchema
+      { toolName = "get_weather"
+      , toolDesc = "Get the current weather of a city."
+      , toolArgs = [ArgInfo "city" "string" "The city to be queried"]
+      }
 
 toolRegistry :: ToolRegistry
 toolRegistry = registerTools [getWeatherTool]
