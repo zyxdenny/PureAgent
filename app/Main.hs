@@ -8,24 +8,10 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.IO (hFlush, stdout)
 import Data.Default (def)
--- import qualified Data.Map.Strict as Map
 import System.Environment (getEnv)
 
 import Agent.Core
--- import Agent.Tool
 import Model.OpenAI (makeOpenAI)
-
--- getWeather :: ToolM T.Text
--- getWeather = do
---   city <- getParam @T.Text "city"
---   return $ "It's always sunny in " <> city
---
--- getWeatherTool :: ToolSchema
--- getWeatherTool = ToolSchema
---   { toolName = "get_weather"
---   , toolDesc = "Get the current weather of a city."
---   , toolArgs = [ArgInfo "city" "string" "The city to be queried"]
---   }
 
 getWeatherTool :: Tool
 getWeatherTool = Tool
@@ -34,15 +20,11 @@ getWeatherTool = Tool
     , toolDesc = "Get the current weather of a city."
     , toolArgs = [ArgInfo "city" "string" "The city to be queried"]
     }
-  (ToolInstance (do 
-    city <- getParam @T.Text "city"
-    return $ "It's always sunny in " <> city
-  ))
-
--- toolMap :: Map.Map T.Text ToolInstance
--- toolMap = Map.fromList
---   [ (toolName getWeatherTool, ToolInstance getWeather)
---   ]
+  (ToolInstance tool)
+    where
+      tool = do 
+        city <- getParam @T.Text "city"
+        return $ "It's always sunny in " <> city
 
 toolRegistry :: ToolRegistry
 toolRegistry = registerTools [getWeatherTool]
