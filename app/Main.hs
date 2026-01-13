@@ -8,53 +8,44 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.IO (hFlush, stdout)
 import Data.Default (def)
-import Agent.OpenAI (makeOpenAI)
-import qualified Data.Map.Strict as Map
+-- import qualified Data.Map.Strict as Map
 import System.Environment (getEnv)
 
 import Agent.Core
-import Agent.Tool
+-- import Agent.Tool
+import Model.OpenAI (makeOpenAI)
 
-getWeather :: ToolM T.Text
-getWeather = do
-  city <- getParam @T.Text "city"
-  return $ "It's always sunny in " <> city
+-- getWeather :: ToolM T.Text
+-- getWeather = do
+--   city <- getParam @T.Text "city"
+--   return $ "It's always sunny in " <> city
+--
+-- getWeatherTool :: ToolSchema
+-- getWeatherTool = ToolSchema
+--   { toolName = "get_weather"
+--   , toolDesc = "Get the current weather of a city."
+--   , toolArgs = [ArgInfo "city" "string" "The city to be queried"]
+--   }
 
 getWeatherTool :: Tool
 getWeatherTool = Tool
-  { toolName = "get_weather"
-  , toolDesc = "Get the current weather of a city."
-  , toolArgs = [ArgInfo "city" "string" "The city to be queried"]
-  }
+  ToolSchema
+    { toolName = "get_weather"
+    , toolDesc = "Get the current weather of a city."
+    , toolArgs = [ArgInfo "city" "string" "The city to be queried"]
+    }
+  (ToolInstance (do 
+    city <- getParam @T.Text "city"
+    return $ "It's always sunny in " <> city
+  ))
 
--- myAdd :: ToolInstance
--- myAdd = ToolInstance $ (
---   \params ->
---     case (Map.lookup "a" params, Map.lookup "b" params) of
---       (Just (Number a), Just (Number b)) -> do
---         return $ T.pack $ show $ a + b
---
---       (Just _, Just _) ->
---         return "Error: a and b have to be both integers"
---
---       (Nothing, _) ->
---         return "Error: parameter a is not provided"
---
---       (_, Nothing) ->
---         return "Error: parameter b is not provided"
---   )
---
--- myAddTool :: Tool
--- myAddTool = Tool
---   { toolName = "add"
---   , toolDesc = "Calculate the sum of two integers."
---   , toolArgs = [ArgInfo "a" "int" "add nnumber a", ArgInfo "b" "int" "add number b"]
---   }
+-- toolMap :: Map.Map T.Text ToolInstance
+-- toolMap = Map.fromList
+--   [ (toolName getWeatherTool, ToolInstance getWeather)
+--   ]
 
-toolMap :: Map.Map T.Text ToolInstance
-toolMap = Map.fromList
-  [ (toolName getWeatherTool, ToolInstance getWeather)
-  ]
+toolRegistry :: ToolRegistry
+toolRegistry = registerTools [getWeatherTool]
 
 
 data AgentState = AgentState
@@ -80,12 +71,12 @@ takeInputNode = do
   modify (\s -> s { memory = inputMessage : memory s })
 
 -- Returns True if there is tool call, false otherwise
-llmNode :: LLM -> GenerationConfig -> [Tool] -> StepM Bool
-llmNode llm conf tools = do
+llmNode :: LLM -> GenerationConfig -> StepM Bool
+llmNode llm conf = do
   s <- get
   let sysMessage = SystemMessage "You are an assiatant for weather queries. Only answer questions about weather."
   modify (\s -> s { memory = sysMessage : memory s })
-  response <- liftIO $ invoke llm conf tools (reverse $ memory s)
+  response <- liftIO $ invoke llm conf toolRegistry (reverse $ memory s)
   case response of         
     Right aiMessage@(AIMessage txt ts) -> do
       unless (T.null txt) $ liftIO $ TIO.putStrLn txt
@@ -103,7 +94,7 @@ toolNode = do
   AgentState m <- get
   case m of
     message : _ -> do
-      toolResponse <- liftIO $ callToolsAndGenerateMessages message toolMap
+      toolResponse <- liftIO $ callToolsAndGenerateMessages message toolRegistry
       case toolResponse of
         Just toolMessages ->
           modify (\s -> s { memory = toolMessages ++ memory s })
@@ -112,26 +103,25 @@ toolNode = do
 
     [] -> throwError $ BadHistory "The history is empty"
 
-agent :: LLM -> GenerationConfig -> [Tool] -> StepM ()
-agent llm conf tools = do
+agent :: LLM -> GenerationConfig -> StepM ()
+agent llm conf = do
   takeInputNode
   toolLoop
- where
-  toolLoop :: StepM ()
-  toolLoop = do
-    routeToTool <- llmNode llm conf tools
-    when routeToTool $ do
-      toolNode
-      toolLoop
+    where
+      toolLoop :: StepM ()
+      toolLoop = do
+        routeToTool <- llmNode llm conf
+        when routeToTool $ do
+          toolNode
+          toolLoop
 
 agentLoop :: StepM ()
 agentLoop = do
   key <- liftIO $ getEnv "OPENAI_API_KEY"
   let modelName = "gpt-5-nano"
       model = makeOpenAI key modelName
-      tools = [getWeatherTool]
 
-  agent model def tools
+  agent model def 
   agentLoop
 
 main :: IO (Either AgentError ())

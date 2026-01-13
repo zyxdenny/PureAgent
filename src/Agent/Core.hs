@@ -1,18 +1,23 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Agent.Core where
 
-import qualified Data.Text as T
-import qualified Data.Map.Strict as Map
-import Data.Default (Default(..))
-import Data.Aeson (Value(..))
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Except
+import qualified Data.Text as T
+import qualified Data.Vector as V
+import qualified Data.Map.Strict as Map
+import Data.Default (Default(..))
+import Data.Aeson (Value(..))
 import Network.HTTP.Client (HttpException)
--- import Data.Maybe
+import Data.Maybe
+import Data.Proxy
+import Data.Scientific (toBoundedInteger, toRealFloat)
 
 type ToolID = T.Text
 
@@ -24,18 +29,9 @@ data ToolCall = ToolCall
   } deriving (Show, Eq)
 
 data Message
-  -- | 1. System: Sets the behavior
   = SystemMessage T.Text
-  
-  -- | 2. User: The human input
   | UserMessage T.Text
-  
-  -- | 3. AI: Can contain text AND/OR tool calls
-  -- Note: OpenAI can send text content along with tool calls (reasoning)
   | AIMessage T.Text [ToolCall] 
-  
-  -- | 4. Tool: The result of the function execution
-  -- Must include the tool_call_id so the LLM knows which call this answers
   | ToolMessage T.Text ToolID 
   deriving (Show, Eq)
 
@@ -45,22 +41,16 @@ data ArgInfo = ArgInfo
   , argDesc :: T.Text
   } deriving Show
 
-data Tool = Tool
-  { toolName :: T.Text
-  , toolDesc :: T.Text
-  , toolArgs :: [ArgInfo]
-  } deriving Show
-
 data GenerationConfig = GenerationConfig
   { -- | Core Parameters (Supported by almost all LLMs)
-    temperature       :: Maybe Double -- ^ 0.0 (deterministic) to 2.0 (random)
-  , maxTokens         :: Maybe Int    -- ^ Limit response length
-  , topP              :: Maybe Double -- ^ Nucleus sampling
-  , stopSequences     :: [T.Text]       -- ^ Stop generating when these appear
+    temperature       :: Maybe Double -- 0.0 (deterministic) to 2.0 (random)
+  , maxTokens         :: Maybe Int    -- Limit response length
+  , topP              :: Maybe Double -- Nucleus sampling
+  , stopSequences     :: [T.Text]       -- Stop generating when these appear
   
     -- | Behavior Modifiers
-  , jsonMode          :: Bool         -- ^ Force valid JSON output
-  , seed              :: Maybe Int    -- ^ For deterministic reproducibility
+  , jsonMode          :: Bool         -- Force valid JSON output
+  , seed              :: Maybe Int    -- For deterministic reproducibility
   
     -- | The "Escape Hatch" 
     -- Allows passing provider-specific parameters not covered above
@@ -92,7 +82,7 @@ data LLMErrorType
 
 data LLM = LLM
   { invoke :: GenerationConfig
-           -> [Tool]
+           -> ToolRegistry
            -> [Message]
            -> IO (Either LLMError Message)
   }
@@ -135,40 +125,143 @@ evalAgent env st (AgentM m) =
       (evalStateT m st)
       env
 
--- -- Tool instance
--- data ToolInstance where
---   ToolInstance :: Show a =>
---     (Map.Map T.Text Value -> IO a) -> ToolInstance
 --
--- runTool :: ToolInstance -> Map.Map T.Text Value -> IO T.Text
--- runTool (ToolInstance f) params = do
---   result <- f params
---   return $ T.pack $ show result
 --
--- -- The function takes a message, the tool map and performs the tool call
--- -- to generate a list of tool messages. If the input message is not AIMessage, return Nothing
--- callToolsAndGenerateMessages
---   :: Message
---   -> Map.Map T.Text ToolInstance
---   -> IO (Maybe [Message])
--- callToolsAndGenerateMessages (AIMessage _ ts) toolMap = do
---   toolResults <- liftIO $
---     mapM (
---       \(ToolCall _ name args) ->
---         case Map.lookup name toolMap of
---           Just tool -> do
---             result <- runTool tool args
---             return $ Just result
 --
---           Nothing -> return Nothing
---     ) ts
 --
---   let toolIDs = map (\(ToolCall iD _ _) -> iD) ts
---       toolMessages = catMaybes $ zipWith f toolResults toolIDs
---         where
---           f (Just res) iD = Just $ ToolMessage res iD
---           f Nothing _     = Nothing
---
---   return $ Just toolMessages
---
--- callToolsAndGenerateMessages _ _ = return Nothing
+-- Tools
+type Params = Map.Map T.Text Value
+
+data ToolError
+  = MissingParam T.Text
+  | TypeMismatch
+      { paramName    :: T.Text
+      , expectedType :: T.Text
+      , actualValue  :: Value
+      }
+  | ToolSpecificError T.Text
+  deriving (Show)
+
+newtype ToolM a = ToolM
+  { runToolM :: ReaderT Params (ExceptT ToolError IO) a
+  }
+  deriving
+    ( Functor
+    , Applicative
+    , Monad
+    , MonadReader Params
+    , MonadError ToolError
+    , MonadIO
+    )
+
+data ToolSchema = ToolSchema
+  { toolName :: T.Text
+  , toolDesc :: T.Text
+  , toolArgs :: [ArgInfo]
+  } deriving Show
+
+data ToolInstance = forall a. Show a => ToolInstance (ToolM a)
+
+data Tool = Tool
+  { toolSchema   :: ToolSchema
+  , toolInstance :: ToolInstance
+  }
+
+type ToolRegistry = Map.Map T.Text (ToolSchema, ToolInstance)
+
+registerTools :: [Tool] -> ToolRegistry
+registerTools ts =
+  Map.fromList $ map f ts
+    where
+      f (Tool schema inst) =
+        (toolName schema, (schema, inst))
+
+runTool :: ToolInstance -> Params -> IO T.Text
+runTool (ToolInstance (ToolM rawTool)) params = do
+  result <- liftIO $ runExceptT $ runReaderT rawTool params
+  return $ T.pack $
+    case result of
+      Left  err -> show err
+      Right ans -> show ans
+
+-- The function takes a message, the tool map and performs the tool call
+-- to generate a list of tool messages. If the input message is not AIMessage, return Nothing
+callToolsAndGenerateMessages
+  :: Message
+  -> ToolRegistry
+  -> IO (Maybe [Message])
+callToolsAndGenerateMessages (AIMessage _ ts) toolRegistry = do
+  toolResults <- liftIO $
+    mapM (
+      \(ToolCall _ name args) ->
+        case Map.lookup name toolRegistry of
+          Just (_, tool) -> do
+            result <- runTool tool args
+            return $ Just result
+
+          Nothing -> return Nothing
+    ) ts
+
+  let toolIDs = map (\(ToolCall iD _ _) -> iD) ts
+      toolMessages = catMaybes $ zipWith f toolResults toolIDs
+        where
+          f (Just res) iD = Just $ ToolMessage res iD
+          f Nothing _     = Nothing
+
+  return $ Just toolMessages
+
+callToolsAndGenerateMessages _ _ = return Nothing
+
+class ToolArgType a where
+  paramType :: proxy a -> T.Text
+  fromValue :: Value -> Maybe a
+
+getParam :: forall a. ToolArgType a => T.Text -> ToolM a
+getParam name = do
+  params <- ask
+  case Map.lookup name params of
+    Nothing ->
+      throwError (MissingParam name)
+
+    Just v ->
+      case fromValue @a v of
+        Just x  -> pure x
+        Nothing ->
+          throwError $
+            TypeMismatch name (paramType (Proxy @a)) v
+
+-- A list of valid tool types
+instance ToolArgType T.Text where
+  paramType _ = "string"
+  fromValue (String t) = Just t
+  fromValue _          = Nothing
+
+instance ToolArgType Int where
+  paramType _ = "int"
+  fromValue (Number n) = toBoundedInteger n
+  fromValue _          = Nothing
+
+instance ToolArgType Float where
+  paramType _ = "float"
+  fromValue (Number n) = Just (toRealFloat n)
+  fromValue _          = Nothing
+
+instance ToolArgType Bool where
+  paramType _ = "bool"
+  fromValue (Bool b) = Just b
+  fromValue _        = Nothing
+
+instance ToolArgType a => ToolArgType (Maybe a) where
+  paramType _ = paramType (Proxy @a)
+  fromValue Null = Just Nothing
+  fromValue v    = Just <$> fromValue @a v
+
+instance ToolArgType a => ToolArgType [a] where
+  paramType _ = "array"
+  fromValue (Array arr) =
+    traverse (fromValue @a) (V.toList arr)
+  fromValue _ = Nothing
+
+instance ToolArgType Value where
+  paramType _ = "json"
+  fromValue v = Just v

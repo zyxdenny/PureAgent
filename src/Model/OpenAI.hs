@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Agent.OpenAI where
+module Model.OpenAI where
 
 import Agent.Core
 import Data.Aeson
@@ -32,10 +32,11 @@ runOpenAI
   :: APIKey
   -> ModelName
   -> GenerationConfig
-  -> [Tool]
+  -> ToolRegistry
   -> [Message]
   -> IO (Either LLMError Message)
-runOpenAI apiKey model conf tools msgs = do
+runOpenAI apiKey model conf toolRegistry msgs = do
+    let tools = map (\(_, (toolSchema, _)) -> toolSchema) $ Map.toList toolRegistry
     let payload = object $
             [ "model"       .= model
             , "messages"    .= map messageToOpenAI msgs
@@ -97,7 +98,7 @@ toolCallToOpenAI tc = object
     argsText :: T.Text
     argsText = TE.decodeUtf8 $ LBS.toStrict $ encode (tcArgs tc)
 
-toolToOpenAI :: Tool -> Value
+toolToOpenAI :: ToolSchema -> Value
 toolToOpenAI tool = object
     [ "type" .= ("function" :: String)
     , "function" .= object
@@ -111,7 +112,6 @@ toolToOpenAI tool = object
         ]
     ]
   where
-    -- FIX 1: Convert Text -> Key here
     argToProperty :: ArgInfo -> Pair
     argToProperty arg = (Key.fromText (argName arg), object 
         [ "type"        .= argType arg
