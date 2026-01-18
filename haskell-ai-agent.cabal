@@ -6,29 +6,45 @@ build-type:      Simple
 common warnings
     ghc-options: -Wall
 
-executable haskell-ai-agent
-    import:           warnings
-    main-is:          Main.hs
-    other-modules:
+library
+    exposed-modules:
         Agent.Core
-        -- Agent.Tool
         Model.OpenAI
+    hs-source-dirs: src
     build-depends:
         base,
         aeson,
-        text,
         bytestring,
-        mtl,
-        req,
-        http-conduit,
-        http-types,
-        http-client,
-        array,
-        hashable,
-        random,
         containers,
         data-default,
-        vector,
-        scientific
-    hs-source-dirs:   app, src
+        http-client,
+        http-conduit,
+        mtl,
+        scientific,
+        text,
+        vector
+    default-language: Haskell2010
+
+executable example-guardrail
+    import:           warnings
+    main-is:          Guardrail.hs
+    build-depends:
+        base,
+        haskell-ai-agent,
+        data-default,
+        mtl,
+        text
+    hs-source-dirs:   examples
+    default-language: Haskell2010
+
+executable example-tooluse
+    import:           warnings
+    main-is:          ToolUse.hs
+    build-depends:
+        base,
+        haskell-ai-agent,
+        data-default,
+        mtl,
+        text
+    hs-source-dirs:   examples
     default-language: Haskell2010

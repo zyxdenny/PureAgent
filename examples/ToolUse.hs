@@ -2,6 +2,7 @@
 {-# LANGUAGE TypeApplications #-}
 
 import Control.Monad.State
+import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Monad (unless, when)
 import qualified Data.Text as T
@@ -26,9 +27,11 @@ getWeatherTool = Tool tool schema
       , toolArgs = [ArgInfo "city" "string" "The city to be queried"]
       }
 
-toolRegistry :: ToolRegistry
-toolRegistry = registerTools [getWeatherTool]
-
+data AgentEnv = AgentEnv
+  { getToolRegistry :: ToolRegistry
+  , getGenerationConfig :: GenerationConfig
+  , getLLM :: IO LLM
+  }
 
 data AgentState = AgentState
   { memory  :: [Message]
@@ -41,7 +44,7 @@ data AgentError =
   | BadHistory T.Text
   | ToolNotFound T.Text
 
-type StepM = AgentM () AgentState AgentError
+type StepM = AgentM AgentEnv AgentState AgentError
 
 takeInputNode :: StepM ()
 takeInputNode = do
@@ -53,12 +56,16 @@ takeInputNode = do
   modify (\s -> s { memory = inputMessage : memory s })
 
 -- Returns True if there is tool call, false otherwise
-llmNode :: LLM -> GenerationConfig -> StepM Bool
-llmNode llm conf = do
+llmNode :: StepM Bool
+llmNode = do
+  env <- ask
+  llm <- liftIO $ getLLM env
+  let conf = getGenerationConfig env
+      toolRegistry = getToolRegistry env
   s <- get
   let sysMessage = SystemMessage "You are an assiatant for weather queries. Only answer questions about weather."
   modify (\s -> s { memory = sysMessage : memory s })
-  response <- liftIO $ invoke llm conf toolRegistry (reverse $ memory s)
+  response <- liftIO $ invoke llm conf (Just toolRegistry) (reverse $ memory s)
   case response of         
     Right aiMessage@(AIMessage txt ts) -> do
       unless (T.null txt) $ liftIO $ TIO.putStrLn txt
@@ -73,6 +80,8 @@ llmNode llm conf = do
 
 toolNode :: StepM ()
 toolNode = do
+  env <- ask
+  let toolRegistry = getToolRegistry env
   AgentState m <- get
   case m of
     message : _ -> do
@@ -85,26 +94,33 @@ toolNode = do
 
     [] -> throwError $ BadHistory "The history is empty"
 
-agent :: LLM -> GenerationConfig -> StepM ()
-agent llm conf = do
+agent :: StepM ()
+agent = do
   takeInputNode
   toolLoop
     where
       toolLoop :: StepM ()
       toolLoop = do
-        routeToTool <- llmNode llm conf
+        routeToTool <- llmNode
         when routeToTool $ do
           toolNode
           toolLoop
 
-agentLoop :: StepM ()
-agentLoop = do
-  key <- liftIO $ getEnv "OPENAI_API_KEY"
-  let modelName = "gpt-5-nano"
-      model = makeOpenAI key modelName
-
-  agent model def 
-  agentLoop
-
 main :: IO (Either AgentError ())
-main = evalAgent () (AgentState []) agentLoop
+main = evalAgent env initState agentLoop
+  where
+    env = AgentEnv
+      { getToolRegistry = registerTools [getWeatherTool]
+      , getGenerationConfig = def
+      , getLLM = do
+          key <- liftIO $ getEnv "OPENAI_API_KEY"
+          let modelName = "gpt-5-nano"
+              model = makeOpenAI key modelName
+          return model
+      }
+
+    initState = AgentState { memory = [] }
+
+    agentLoop = do
+      agent
+      agentLoop

@@ -32,11 +32,15 @@ runOpenAI
   :: APIKey
   -> ModelName
   -> GenerationConfig
-  -> ToolRegistry
+  -> Maybe ToolRegistry
   -> [Message]
   -> IO (Either LLMError Message)
-runOpenAI apiKey model conf toolRegistry msgs = do
-    let tools = map (\(_, (toolSchema, _)) -> toolSchema) $ Map.toList toolRegistry
+runOpenAI apiKey model conf toolRegistryMaybe msgs = do
+    let tools =
+          maybe
+            []
+            (map (\(_, (toolSchema, _)) -> toolSchema) . Map.toList)
+            toolRegistryMaybe
     let payload = object $
             [ "model"       .= model
             , "messages"    .= map messageToOpenAI msgs

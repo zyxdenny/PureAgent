@@ -82,7 +82,7 @@ data LLMErrorType
 
 data LLM = LLM
   { invoke :: GenerationConfig
-           -> ToolRegistry
+           -> Maybe ToolRegistry
            -> [Message]
            -> IO (Either LLMError Message)
   }
