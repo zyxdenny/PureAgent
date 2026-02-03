@@ -117,10 +117,22 @@ toolToOpenAI tool = object
     ]
   where
     argToProperty :: ArgInfo -> Pair
-    argToProperty arg = (Key.fromText (argName arg), object 
-        [ "type"        .= argType arg
-        , "description" .= argDesc arg
-        ])
+    argToProperty arg = (Key.fromText (argName arg), argTypeToSchema (argType arg))
+
+argTypeToSchema :: ArgType -> Value
+argTypeToSchema argType = case argType of
+  ArgString   -> object ["type" .= ("string" :: String)]
+  ArgNumber   -> object ["type" .= ("number" :: String)]
+  ArgInteger  -> object ["type" .= ("integer" :: String)]
+  ArgBoolean  -> object ["type" .= ("boolean" :: String)]
+  ArgArray t  -> object
+      [ "type"  .= ("array" :: String)
+      , "items" .= argTypeToSchema t
+      ]
+  ArgObject fields -> object
+      [ "type"       .= ("object" :: String)
+      , "properties" .= object (map (\(n, t) -> Key.fromText n .= argTypeToSchema t) fields)
+      ]
 
 configToJSON :: GenerationConfig -> [Pair]
 configToJSON conf = catMaybes
