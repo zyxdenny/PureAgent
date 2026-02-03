@@ -35,9 +35,18 @@ data Message
   | ToolMessage T.Text ToolID 
   deriving (Show, Eq)
 
+data ArgType
+  = ArgString
+  | ArgNumber
+  | ArgInteger
+  | ArgBoolean
+  | ArgArray ArgType
+  | ArgObject [(T.Text, ArgType)]
+  deriving (Show, Eq)
+
 data ArgInfo = ArgInfo
   { argName :: T.Text
-  , argType :: T.Text
+  , argType :: ArgType
   , argDesc :: T.Text
   } deriving Show
 
@@ -212,11 +221,11 @@ callToolsAndGenerateMessages (AIMessage _ ts) toolRegistry = do
 
 callToolsAndGenerateMessages _ _ = return Nothing
 
-class ToolArgType a where
+class ArgDecodeType a where
   paramType :: proxy a -> T.Text
   fromValue :: Value -> Maybe a
 
-getParam :: forall a. ToolArgType a => T.Text -> ToolM a
+getParam :: forall a. ArgDecodeType a => T.Text -> ToolM a
 getParam name = do
   params <- ask
   case Map.lookup name params of
@@ -231,37 +240,37 @@ getParam name = do
             TypeMismatch name (paramType (Proxy @a)) v
 
 -- A list of valid tool types
-instance ToolArgType T.Text where
+instance ArgDecodeType T.Text where
   paramType _ = "string"
   fromValue (String t) = Just t
   fromValue _          = Nothing
 
-instance ToolArgType Int where
+instance ArgDecodeType Int where
   paramType _ = "int"
   fromValue (Number n) = toBoundedInteger n
   fromValue _          = Nothing
 
-instance ToolArgType Float where
+instance ArgDecodeType Float where
   paramType _ = "float"
   fromValue (Number n) = Just (toRealFloat n)
   fromValue _          = Nothing
 
-instance ToolArgType Bool where
+instance ArgDecodeType Bool where
   paramType _ = "bool"
   fromValue (Bool b) = Just b
   fromValue _        = Nothing
 
-instance ToolArgType a => ToolArgType (Maybe a) where
+instance ArgDecodeType a => ArgDecodeType (Maybe a) where
   paramType _ = paramType (Proxy @a)
   fromValue Null = Just Nothing
   fromValue v    = Just <$> fromValue @a v
 
-instance ToolArgType a => ToolArgType [a] where
+instance ArgDecodeType a => ArgDecodeType [a] where
   paramType _ = "array"
   fromValue (Array arr) =
     traverse (fromValue @a) (V.toList arr)
   fromValue _ = Nothing
 
-instance ToolArgType Value where
+instance ArgDecodeType Value where
   paramType _ = "json"
   fromValue v = Just v
