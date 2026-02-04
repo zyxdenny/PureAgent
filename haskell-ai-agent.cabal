@@ -7,8 +7,10 @@ common warnings
     ghc-options: -Wall
 
 library
+    import: warnings
     exposed-modules:
         Agent.Core
+        Agent.Agent
         Model.OpenAI
     hs-source-dirs: src
     build-depends:
@@ -22,7 +24,8 @@ library
         mtl,
         scientific,
         text,
-        vector
+        vector,
+        extra
     default-language: Haskell2010
 
 executable example-guardrail
@@ -40,6 +43,18 @@ executable example-guardrail
 executable example-tooluse
     import:           warnings
     main-is:          ToolUse.hs
+    build-depends:
+        base,
+        haskell-ai-agent,
+        data-default,
+        mtl,
+        text
+    hs-source-dirs:   examples
+    default-language: Haskell2010
+
+executable example-subagents
+    import:           warnings
+    main-is:          SubAgents.hs
     build-depends:
         base,
         haskell-ai-agent,
